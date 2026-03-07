@@ -1,0 +1,130 @@
+#Import Required Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from mlxtend.frequent_patterns import apriori, association_rules    
+
+#INPUT LAYER
+data = pd.read_csv("dengue_dataset_5000_cases.csv")
+data['Date'] = pd.to_datetime(data['Date'])
+data.set_index('Date', inplace=True)
+print("Dataset Loaded Successfully")
+print(data.head())
+
+#DATA UNDERSTANDING
+plt.figure(figsize=(10,5))
+plt.plot(data.index, data['Dengue_Cases'])
+plt.title("Dengue Cases Trend Over Time")
+plt.xlabel("Date")
+plt.ylabel("Cases")
+plt.show()
+
+#DATA PREPROCESSING Handle Missing Values
+data = data.fillna(method='ffill')
+
+#Normalize Weather Variables
+scaler = MinMaxScaler()
+data[['Temperature (°C)','Rainfall (mm)','Humidity (%)']] = scaler.fit_transform(
+    data[['Temperature (°C)','Rainfall (mm)','Humidity (%)']])
+
+#Stationarity Test (ADF)
+result = adfuller(data['Dengue_Cases'])
+print("ADF Statistic:", result[0])
+print("p-value:", result[1])
+if result[1] < 0.05:
+    print("Series is Stationary")
+else:
+    print("Series is Not Stationary")
+
+#TIME SERIES DECOMPOSITION
+decomposition = seasonal_decompose(data['Dengue_Cases'], model='additive', period=365)
+trend = decomposition.trend
+seasonal = decomposition.seasonal
+residual = decomposition.resid
+decomposition.plot()
+plt.show()
+
+#ASSOCIATION RULE MINING (ARM MODEL)
+arm_data = data.copy()
+arm_data['High_Temp'] = arm_data['Temperature (°C)'] > arm_data['Temperature (°C)'].mean()
+arm_data['High_Rain'] = arm_data['Rainfall (mm)'] > arm_data['Rainfall (mm)'].mean()
+arm_data['High_Humidity'] = arm_data['Humidity (%)'] > arm_data['Humidity (%)'].mean()
+arm_data['High_Cases'] = arm_data['Dengue_Cases'] > arm_data['Dengue_Cases'].mean()
+arm_df = arm_data[['High_Temp','High_Rain','High_Humidity','High_Cases']]
+frequent = apriori(arm_df, min_support=0.3, use_colnames=True)
+rules = association_rules(frequent, metric="confidence", min_threshold=0.6)
+print("\nAssociation Rules")
+print(rules[['antecedents','consequents','support','confidence']])
+
+#PARAMETER ESTIMATION (ACF & PACF)ACF Graph
+plot_acf(data['Dengue_Cases'])
+plt.title("ACF Plot")
+plt.show()
+
+#PACF Graph
+plot_pacf(data['Dengue_Cases'])
+plt.title("PACF Plot")
+plt.show()
+
+#ARIMA MODEL
+ts = data['Dengue_Cases'].tail(1000)  #for 5000 change the number 1000 to 5k
+p = int(input("Enter ARIMA p value: "))
+d = int(input("Enter ARIMA d value: "))
+q = int(input("Enter ARIMA q value: "))
+arima_model = ARIMA(ts, order=(p,d,q))
+arima_fit = arima_model.fit(method='statespace', maxiter=50)
+print("ARIMA Model Built Successfully")
+
+#ARIMA ACTUAL VS PREDICTED COMPARISON
+predicted = arima_fit.predict(start=data.index[0], end=data.index[-1])
+plt.figure(figsize=(10,5))
+plt.plot(data.index, data['Dengue_Cases'], label="Actual")
+plt.plot(data.index, predicted, label="ARIMA Predicted")
+plt.legend()
+plt.title("Actual vs Predicted Dengue Cases (ARIMA)")
+plt.xlabel("Date")
+plt.ylabel("Cases")
+plt.show()
+
+#MODEL EVALUATION
+rmse = np.sqrt(mean_squared_error(data['Dengue_Cases'], predicted))
+mae = mean_absolute_error(data['Dengue_Cases'], predicted)
+print("RMSE:", rmse)
+print("MAE:", mae)
+
+#SHORT-TERM DENGUE PREDICTION (ARIMA)
+steps = int(input("Enter number of days to forecast: "))
+forecast = arima_fit.forecast(steps=steps)
+print("\nShort-Term Dengue Forecast")
+print(forecast)
+
+#ARIMA FORECAST GRAPH
+future_index = pd.date_range(start=data.index[-1], periods=steps+1, freq='D')[1:]
+plt.figure(figsize=(10,5))
+plt.plot(data.index, data['Dengue_Cases'], label="Historical")
+plt.plot(future_index, forecast, label="Forecast")
+plt.legend()
+plt.title("Short-Term Dengue Forecast (ARIMA)")
+plt.xlabel("Date")
+plt.ylabel("Cases")
+plt.show()
+
+#ARM SHORT-TERM RISK PREDICTION GRAPH
+risk_prediction = arm_data['High_Temp'] & arm_data['High_Rain'] & arm_data['High_Humidity']
+risk_prediction = risk_prediction.astype(int)
+plt.figure(figsize=(10,5))
+plt.plot(data.index, data['Dengue_Cases'], label="Actual Dengue Cases")
+plt.plot(data.index,
+         risk_prediction * data['Dengue_Cases'].mean(),
+         label="ARM Risk Prediction")
+plt.legend()
+plt.title("Short-Term Dengue Risk Prediction (ARM)")
+plt.xlabel("Date")
+plt.ylabel("Cases / Risk Level")
+plt.show()
